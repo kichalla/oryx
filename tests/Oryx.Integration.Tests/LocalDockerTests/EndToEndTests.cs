@@ -3,6 +3,8 @@
 // Licensed under the MIT license.
 // --------------------------------------------------------------------------------------------
 
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -13,7 +15,7 @@ using Xunit.Abstractions;
 
 namespace Microsoft.Oryx.Integration.Tests.LocalDockerTests
 {
-    public class EndToEndTests
+    public class EndToEndTests : IClassFixture<TestTempDirTestFixture>
     {
         private const int HostPort = 8000;
         private const string startupFilePath = "/tmp/startup.sh";
@@ -21,12 +23,62 @@ namespace Microsoft.Oryx.Integration.Tests.LocalDockerTests
         private readonly ITestOutputHelper _output;
         private readonly string _hostSamplesDir;
         private readonly HttpClient _httpClient;
+        private readonly string _tempRootDir;
 
-        public EndToEndTests(ITestOutputHelper output)
+        public EndToEndTests(ITestOutputHelper output, TestTempDirTestFixture testTempDirTestFixture)
         {
             _output = output;
             _hostSamplesDir = Path.Combine(Directory.GetCurrentDirectory(), "SampleApps");
             _httpClient = new HttpClient();
+            _tempRootDir = testTempDirTestFixture.RootDirPath;
+        }
+
+        [Fact]
+        public async Task CanBuildAndRunNodeApp_UsingZippedNodeModules()
+        {
+            // Arrange
+            var appOutputDirPath = Directory.CreateDirectory(Path.Combine(_tempRootDir, Guid.NewGuid().ToString("N"))).FullName;
+            var appOutputDirVolume = DockerVolume.Create(appOutputDirPath);
+            var appOutputDir = appOutputDirVolume.ContainerDir;
+            var nodeVersion = "10.14";
+            var appName = "webfrontend";
+            var hostDir = Path.Combine(_hostSamplesDir, "nodejs", appName);
+            var volume = DockerVolume.Create(hostDir);
+            var appDir = volume.ContainerDir;
+            var portMapping = $"{HostPort}:80";
+            var script = new ShellScriptBuilder()
+                .AddCommand($"cd {appDir}")
+                .AddCommand($"oryx -appPath {appOutputDir} -output {startupFilePath} -bindPort 80")
+                .AddCommand(startupFilePath)
+                .ToString();
+
+            var buildScript = new ShellScriptBuilder()
+                .AddCommand($"oryx build {appDir} -i /tmp/int -o {appOutputDir} -l nodejs --language-version {nodeVersion} -p zip_nodemodules_dir=true")
+                .ToString();
+
+            await EndToEndTestHelper.BuildRunAndAssertAppAsync(
+                appName,
+                _output,
+                new List<DockerVolume> { appOutputDirVolume, volume },
+                "/bin/sh",
+                new[]
+                {
+                    "-c",
+                    buildScript
+                },
+                $"oryxdevms/node-{nodeVersion}",
+                portMapping,
+                "/bin/sh",
+                new[]
+                {
+                    "-c",
+                    script
+                },
+                async () =>
+                {
+                    var data = await _httpClient.GetStringAsync($"http://localhost:{HostPort}/");
+                    Assert.Contains("Say It Again", data);
+                });
         }
 
         [Theory]

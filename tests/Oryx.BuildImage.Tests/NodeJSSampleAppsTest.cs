@@ -479,7 +479,7 @@ namespace Microsoft.Oryx.BuildImage.Tests
                 result.GetDebugInfo());
         }
 
-        [Fact]
+        [Fact(Skip = "#819489")]
         public void GeneratesScriptAndBuilds_WhenDestination_IsSubDirectoryOfSource()
         {
             // Arrange
@@ -578,20 +578,71 @@ namespace Microsoft.Oryx.BuildImage.Tests
         }
 
         [Fact]
-        public void TestRegex()
+        public void BuildsNodeApp_AndZipsNodeModules_IfZipNodeModulesProperty_IsTrue()
         {
-            Assert.Matches(@"Pre-build script: /opt/nodejs/6.\d+.\d+/bin/node", @"
-a
-d
-d
-d
-d
-d
-Pre-build script: /opt/nodejs/6.11.0/bin/node
-d
-a
+            // Arrange
+            var volume = CreateWebFrontEndVolume();
+            var appDir = volume.ContainerDir;
+            var appOutputDir = "/tmp/webfrontend-output";
+            var script = new ShellScriptBuilder()
+                .AddBuildCommand($"{appDir} -o {appOutputDir} -p zip_nodemodules_dir=true")
+                .AddFileExistsCheck($"{appOutputDir}/node_modules.zip")
+                .AddDirectoryDoesNotExistCheck($"{appOutputDir}/node_modules")
+                .ToString();
 
-");
+            // Act
+            var result = _dockerCli.Run(
+                Settings.BuildImageName,
+                volume,
+                commandToExecuteOnRun: "/bin/bash",
+                commandArguments:
+                new[]
+                {
+                    "-c",
+                    script
+                });
+
+            // Assert
+            RunAsserts(
+                () =>
+                {
+                    Assert.True(result.IsSuccess);
+                },
+                result.GetDebugInfo());
+        }
+
+        [Fact]
+        public void BuildsNodeApp_AndDoesNotZipNodeModules_IfZipNodeModulesProperty_IsFalse()
+        {
+            // Arrange
+            var volume = CreateWebFrontEndVolume();
+            var appDir = volume.ContainerDir;
+            var appOutputDir = "/tmp/webfrontend-output";
+            var script = new ShellScriptBuilder()
+                .AddBuildCommand($"{appDir} -o {appOutputDir} -p zip_nodemodules_dir=false")
+                .AddFileDoesNotExistCheck($"{appOutputDir}/node_modules.zip")
+                .AddDirectoryExistsCheck($"{appOutputDir}/node_modules")
+                .ToString();
+
+            // Act
+            var result = _dockerCli.Run(
+                Settings.BuildImageName,
+                volume,
+                commandToExecuteOnRun: "/bin/bash",
+                commandArguments:
+                new[]
+                {
+                    "-c",
+                    script
+                });
+
+            // Assert
+            RunAsserts(
+                () =>
+                {
+                    Assert.True(result.IsSuccess);
+                },
+                result.GetDebugInfo());
         }
     }
 }
